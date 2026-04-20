@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/rafaelperet/secure-compose/internal/config"
-	"github.com/rafaelperet/secure-compose/internal/docker"
-	"github.com/rafaelperet/secure-compose/internal/age"
+	"github.com/rafitox/secure-compose/internal/config"
+	"github.com/rafitox/secure-compose/internal/docker"
+	"github.com/rafitox/secure-compose/internal/age"
 )
 
 // Run is the main entry point for the CLI
