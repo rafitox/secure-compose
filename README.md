@@ -46,7 +46,7 @@ sudo mv secure-compose /usr/local/bin/
 ### From source
 
 ```bash
-git clone https://github.com/rafaelperet/secure-compose.git
+git clone https://github.com/rafitox/secure-compose.git
 cd secure-compose
 make install
 ```
