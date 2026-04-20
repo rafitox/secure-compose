@@ -293,16 +293,24 @@ func composeCmd(op string, args []string) error {
 		return fmt.Errorf("failed to set permissions: %w", err)
 	}
 
-	// Setup cleanup (unless disabled)
-	if os.Getenv("SECURE_COMPOSE_NO_TEARDOWN") != "1" {
-		defer os.Remove(cfg.EnvFile)
-	}
-
 	// Build docker compose command
 	dockerArgs := append([]string{op}, args...)
 	fmt.Printf("→ Running: docker compose %s\n", strings.Join(dockerArgs, " "))
 
-	return docker.Run(dockerArgs)
+	if err := docker.Run(dockerArgs); err != nil {
+		return err
+	}
+
+	// After successful up, warn about .env persistence
+	if op == "up" {
+		fmt.Printf("\n⚠  .env file is persisted on disk after 'up'.\n")
+		fmt.Printf("   The container reads it on startup — if you restart the container\n")
+		fmt.Printf("   without the .env file, it will fail.\n")
+		fmt.Printf("   Remove it manually when ready:\n")
+		fmt.Printf("   rm %s\n\n", cfg.EnvFile)
+	}
+
+	return nil
 }
 
 // checkDependencies verifies required tools are installed

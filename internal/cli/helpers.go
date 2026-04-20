@@ -10,37 +10,14 @@ import (
 	"strings"
 )
 
-// readPassphrase reads a passphrase from stdin with fallback
+// readPassphrase reads a passphrase from stdin
 func readPassphrase(prompt string) (string, error) {
 	fmt.Print(prompt + " ")
-
 	reader := bufio.NewReader(os.Stdin)
-
-	// Check if we have a real TTY
-	stat, _ := os.Stdin.Stat()
-	isTTY := (stat.Mode() & os.ModeCharDevice) != 0
-
-	var line string
-	var err error
-
-	if isTTY {
-		// Disable terminal echo
-		exec.Command("stty", "-echo").Run()
-		defer exec.Command("stty", "echo").Run()
-
-		fmt.Println()
-		line, err = reader.ReadString('\n')
-		exec.Command("stty", "echo").Run()
-		fmt.Println()
-	} else {
-		// Non-TTY (piped input)
-		line, err = reader.ReadString('\n')
-	}
-
+	line, err := reader.ReadString('\n')
 	if err != nil {
 		return "", fmt.Errorf("failed to read passphrase: %w", err)
 	}
-
 	return strings.TrimSuffix(line, "\n"), nil
 }
 
@@ -60,13 +37,11 @@ func runEditor(editor, path string) error {
 	if len(parts) == 0 {
 		return fmt.Errorf("empty editor command")
 	}
-
 	args := append(parts[1:], path)
 	cmd := exec.Command(parts[0], args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-
 	return cmd.Run()
 }
 
@@ -78,7 +53,6 @@ func validateEnvContent(content []byte) error {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-
 		if strings.Contains(line, "=") {
 			key := strings.SplitN(line, "=", 2)[0]
 			key = strings.TrimSpace(key)
@@ -98,10 +72,7 @@ func validateEnvContent(content []byte) error {
 }
 
 func isEnvKeyChar(c rune) bool {
-	return (c >= 'a' && c <= 'z') ||
-		(c >= 'A' && c <= 'Z') ||
-		(c >= '0' && c <= '9') ||
-		c == '_'
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 }
 
 func truncate(s string, maxLen int) string {

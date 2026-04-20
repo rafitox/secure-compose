@@ -9,23 +9,47 @@ import (
 	"strings"
 )
 
-// IsInstalled checks if docker is available
+// IsInstalled checks if docker compose is available (either v1 or v2)
 func IsInstalled() bool {
-	_, err := exec.LookPath("docker")
-	return err == nil
+	// Check for docker compose v2 (docker CLI integrated)
+	if _, err := exec.LookPath("docker"); err == nil {
+		cmd := exec.Command("docker", "compose", "version")
+		if cmd.Run() == nil {
+			return true
+		}
+	}
+
+	// Check for docker-compose v1 standalone
+	if _, err := exec.LookPath("docker-compose"); err == nil {
+		cmd := exec.Command("docker-compose", "--version")
+		if cmd.Run() == nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Run executes docker compose with the given arguments
+// Automatically detects v1 vs v2 and constructs the correct command
 func Run(args []string) error {
 	ctx := context.Background()
 
-	// Find docker compose binary
-	dockerCompose := findDockerCompose()
-	if dockerCompose == "" {
-		return fmt.Errorf("docker compose not found. Is Docker installed?")
+	// Detect docker compose version
+	binary, useV2 := detectDockerCompose()
+	if binary == "" {
+		return fmt.Errorf("docker compose not found. Install Docker with Compose plugin, or docker-compose v1")
 	}
 
-	cmd := exec.CommandContext(ctx, dockerCompose, args...)
+	var cmd *exec.Cmd
+	if useV2 {
+		// Docker Compose v2: "docker compose <args>"
+		cmd = exec.CommandContext(ctx, binary, append([]string{"compose"}, args...)...)
+	} else {
+		// Docker Compose v1: "docker-compose <args>"
+		cmd = exec.CommandContext(ctx, binary, args...)
+	}
+
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -33,22 +57,26 @@ func Run(args []string) error {
 	return cmd.Run()
 }
 
-// findDockerCompose finds the docker compose binary (v2 or v1)
-func findDockerCompose() string {
+// detectDockerCompose finds the docker compose binary and version
+// Returns (binary, isV2)
+func detectDockerCompose() (string, bool) {
 	// Try docker compose v2 first (integrated in docker CLI)
-	if _, err := exec.LookPath("docker"); err == nil {
-		cmd := exec.Command("docker", "compose", "version")
+	if path, err := exec.LookPath("docker"); err == nil {
+		cmd := exec.Command(path, "compose", "version")
 		if err := cmd.Run(); err == nil {
-			return "docker"
+			return path, true // V2 detected
 		}
 	}
 
 	// Try standalone docker-compose v1
-	if _, err := exec.LookPath("docker-compose"); err == nil {
-		return "docker-compose"
+	if path, err := exec.LookPath("docker-compose"); err == nil {
+		cmd := exec.Command(path, "--version")
+		if err := cmd.Run(); err == nil {
+			return path, false // V1 detected
+		}
 	}
 
-	return ""
+	return "", false
 }
 
 // GetVersion returns docker compose version info
@@ -56,16 +84,16 @@ func GetVersion() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5)
 	defer cancel()
 
-	dockerCompose := findDockerCompose()
-	if dockerCompose == "" {
+	binary, useV2 := detectDockerCompose()
+	if binary == "" {
 		return "", fmt.Errorf("docker compose not found")
 	}
 
 	var cmd *exec.Cmd
-	if dockerCompose == "docker" {
-		cmd = exec.CommandContext(ctx, "docker", "compose", "version")
+	if useV2 {
+		cmd = exec.CommandContext(ctx, binary, "compose", "version")
 	} else {
-		cmd = exec.CommandContext(ctx, "docker-compose", "version")
+		cmd = exec.CommandContext(ctx, binary, "--version")
 	}
 
 	out, err := cmd.CombinedOutput()
@@ -112,16 +140,16 @@ func GetProjectName(composeFile string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5)
 	defer cancel()
 
-	dockerCompose := findDockerCompose()
-	if dockerCompose == "" {
+	binary, useV2 := detectDockerCompose()
+	if binary == "" {
 		return "", fmt.Errorf("docker compose not found")
 	}
 
 	var cmd *exec.Cmd
-	if dockerCompose == "docker" {
-		cmd = exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "config", "--project-name")
+	if useV2 {
+		cmd = exec.CommandContext(ctx, binary, "compose", "-f", composeFile, "config", "--project-name")
 	} else {
-		cmd = exec.CommandContext(ctx, "docker-compose", "-f", composeFile, "config", "--project-name")
+		cmd = exec.CommandContext(ctx, binary, "-f", composeFile, "config", "--project-name")
 	}
 
 	out, err := cmd.CombinedOutput()

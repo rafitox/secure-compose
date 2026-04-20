@@ -1,36 +1,13 @@
-# Binaries
+# Test artifacts (from our testing)
+/.env
+/.env
+.env.age
+.env.test
+test.env
+docker-compose.yaml
 secure-compose
-secure-compose-*
-*.exe
 
-# Dependencies
-vendor/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# Test coverage
-cover.out
-coverage.html
-
-# Temp files
-*.tmp
-*.temp
-.env
-.env.local
-.env.*.local
-
-# OS
+# Keep .env.age since it's the encrypted version
+# But remove any local test .env files
+*.log
 .DS_Store
-Thumbs.db
-
-# Age passphrase temp files (should be cleaned automatically)
-sc-passphrase-*
-sc-encrypt-*
-sc-decrypt-*
-sc-encrypted-*
-sc-decrypted-*
