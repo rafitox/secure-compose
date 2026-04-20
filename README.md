@@ -23,7 +23,6 @@ When you use Docker Compose in development, you typically store secrets in a `.e
 - 👥 **Team-friendly** — Same passphrase for the whole team
 - 🚫 **No key files** — Passphrase only, easier to rotate
 - ✅ **Git-safe** — `.env.age` is safe to commit
-- 🧹 **Auto cleanup** — `.env` file is removed after use
 - 🖥️ **Editor integration** — Edit encrypted files directly
 - 🔄 **Docker compose wrapper** — Works with existing workflows
 
