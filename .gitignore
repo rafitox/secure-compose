@@ -1,0 +1,36 @@
+# Binaries
+secure-compose
+secure-compose-*
+*.exe
+
+# Dependencies
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test coverage
+cover.out
+coverage.html
+
+# Temp files
+*.tmp
+*.temp
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Age passphrase temp files (should be cleaned automatically)
+sc-passphrase-*
+sc-encrypt-*
+sc-decrypt-*
+sc-encrypted-*
+sc-decrypted-*
