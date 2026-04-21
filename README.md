@@ -1,18 +1,20 @@
 # secure-compose
 
-> Docker Compose with age-encrypted secrets for teams
+> Docker Compose with age-encrypted secrets for teams and Docker secrets
 
-**secure-compose** is a CLI tool that encrypts your `.env` files using [age](https://github.com/FiloSottile/age) (a simple, modern encryption tool) so you can safely commit secrets to git and share them with your team.
+**secure-compose** is a CLI tool that encrypts your `.env` files and Docker secrets using [age](https://github.com/FiloSottile/age) (a simple, modern encryption tool) so you can safely commit secrets to git and share them with your team. It also auto-discovers and decrypts secrets defined in your `docker-compose.yaml`.
 
 ## Why?
 
-When you use Docker Compose in development, you typically store secrets in a `.env` file. This file:
-- Often contains passwords, API keys, and tokens in **plaintext**
-- Gets committed to git by mistake
-- Lives unencrypted on servers
+When you use Docker Compose in development, you typically store secrets in a `.env` file or use Docker secrets. These:
+- Often contain passwords, API keys, and tokens in **plaintext**
+- Get committed to git by mistake
+- Live unencrypted on servers
 
 **secure-compose** solves this by:
 - Encrypting `.env` → `.env.age` with a passphrase
+- Supporting Docker secrets (`--secret-file`) for compose-based workflows
+- Auto-discovering secrets from `docker-compose.yaml` and decrypting them before `up`
 - Allowing safe commit of `.env.age` to git
 - Decrypting transparently when running `docker compose`
 - No key files to manage — just a shared passphrase
@@ -23,8 +25,11 @@ When you use Docker Compose in development, you typically store secrets in a `.e
 - 👥 **Team-friendly** — Same passphrase for the whole team
 - 🚫 **No key files** — Passphrase only, easier to rotate
 - ✅ **Git-safe** — `.env.age` is safe to commit
+- 🐳 **Docker secrets support** — Encrypt/decrypt secret files for compose
+- 🔍 **Auto-discovery** — Parses `docker-compose.yaml` for secrets automatically
 - 🖥️ **Editor integration** — Edit encrypted files directly
 - 🔄 **Docker compose wrapper** — Works with existing workflows
+- 📤 **Stdout mode** — Decrypt to stdout for piping workflows
 
 ## Installation
 
@@ -32,12 +37,12 @@ When you use Docker Compose in development, you typically store secrets in a `.e
 
 ```bash
 # Linux
-curl -fsSL https://github.com/rafitox/secure-compose/releases/download/v0.1.0/secure-compose-linux-amd64 -o secure-compose
+curl -fsSL https://github.com/rafitox/secure-compose/releases/download/v0.2.0/secure-compose-linux-amd64 -o secure-compose
 chmod +x secure-compose
 sudo mv secure-compose /usr/local/bin/
 
 # macOS
-curl -fsSL https://github.com/rafitox/secure-compose/releases/download/v0.1.0/secure-compose-darwin-arm64 -o secure-compose
+curl -fsSL https://github.com/rafitox/secure-compose/releases/download/v0.2.0/secure-compose-darwin-arm64 -o secure-compose
 chmod +x secure-compose
 sudo mv secure-compose /usr/local/bin/
 ```
@@ -47,7 +52,8 @@ sudo mv secure-compose /usr/local/bin/
 ```bash
 git clone https://github.com/rafitox/secure-compose.git
 cd secure-compose
-make install
+go build -o secure-compose ./cmd/secure-compose
+sudo mv secure-compose /usr/local/bin/
 ```
 
 ### Prerequisites
@@ -72,9 +78,9 @@ sudo apt install age
 
 ```bash
 # .env (DO NOT COMMIT THIS!)
-DATABASE_PASSWORD=super-secret-password
-API_KEY=sk-live-xxxxxxxxxxxxx
-STRIPE_SECRET=sk_test_xxxx
+DATABASE_PASSWORD=super-secret-word
+API_KEY=***
+STRIPE_SECRET=***
 ```
 
 ### 2. Encrypt
@@ -121,17 +127,97 @@ secure-compose down
 ## Commands
 
 ```
-secure-compose encrypt               Encrypt .env to .env.age
-secure-compose decrypt               Decrypt .env.age to .env
-secure-compose edit                 Edit encrypted file
-secure-compose up [args]            docker compose up
-secure-compose down [args]          docker compose down
-secure-compose exec <svc> <cmd>     docker compose exec
-secure-compose restart [args]       docker compose restart
-secure-compose logs [args]          docker compose logs
-secure-compose build [args]          docker compose build
-secure-compose -h, --help           Show help
-secure-compose --version            Show version
+secure-compose encrypt                 Encrypt .env to .env.age
+secure-compose encrypt --secret-file <file>  Encrypt a specific secret file
+secure-compose decrypt                 Decrypt .env.age to .env
+secure-compose decrypt -o             Decrypt to stdout (for piping)
+secure-compose decrypt --secret-file <file>  Decrypt a specific secret file
+secure-compose edit                   Edit encrypted file
+secure-compose up [args]              docker compose up (auto-decrypts secrets)
+secure-compose down [args]            docker compose down
+secure-compose exec <svc> <cmd>       docker compose exec
+secure-compose restart [args]         docker compose restart
+secure-compose logs [args]            docker compose logs
+secure-compose build [args]            docker compose build
+secure-compose -h, --help             Show help
+secure-compose --version              Show version
+```
+
+### Options
+
+```
+-o, --stdout              Write decrypted content to stdout (for piping)
+-s, --secret-file <path>  Encrypt/decrypt a specific secret file
+-f, --compose-file <path> Override compose file path (default: auto-detect)
+```
+
+## Docker Secrets Workflow
+
+For projects using Docker's built-in secrets feature:
+
+### 1. Define secrets in docker-compose.yaml
+
+```yaml
+services:
+  postgres:
+    image: postgres
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+```
+
+### 2. Create and encrypt the secret file
+
+```bash
+# Create secrets directory
+mkdir -p secrets
+chmod 700 secrets
+
+# Create secret file
+echo "super-secret-password" > secrets/db_password.txt
+
+# Encrypt it
+secure-compose encrypt --secret-file secrets/db_password.txt
+# → Encrypting secrets/db_password.txt → secrets/db_password.txt.age
+# → Remove plaintext file after encryption
+# → ✓ Secret encrypted successfully
+
+# Add to gitignore
+echo "secrets/" >> .gitignore
+```
+
+### 3. Team member decrypts and runs
+
+```bash
+git pull
+secure-compose up -d
+# → Found 1 secret(s) in compose file
+# → Decrypting secret: db_password
+# → Decrypting secrets...
+# → Running: docker compose up -d
+```
+
+## Stdout Mode (Piping)
+
+Decrypt directly to stdout for use in scripts and piping:
+
+```bash
+# Pipe to another process
+secure-compose decrypt --stdout | jq -r '.DATABASE_PASSWORD'
+
+# Redirect to a file
+secure-compose decrypt --stdout > backup.env
+
+# Use with secret files
+secure-compose decrypt --secret-file secrets/db_password.txt --stdout
+
+# CI/CD piping
+SECURE_COMPOSE_PASSPHRASE="$PASSPHRASE" secure-compose decrypt --stdout
 ```
 
 ## Environment Variables
@@ -140,6 +226,8 @@ secure-compose --version            Show version
 |----------|-------------|---------|
 | `SECURE_COMPOSE_ENV_FILE` | Path to .env file | `.env` |
 | `SECURE_COMPOSE_ENCRYPTED_FILE` | Path to .env.age | `.env.age` |
+| `SECURE_COMPOSE_SECRET_FILE` | Specific secret file for encrypt/decrypt | (none) |
+| `SECURE_COMPOSE_SECRETS_DIR` | Directory for secret files | (none) |
 | `SECURE_COMPOSE_PASSPHRASE` | Passphrase (for CI/automation) | (none) |
 | `SECURE_COMPOSE_NO_TEARDOWN` | Skip .env cleanup | `0` |
 | `EDITOR` | Editor for `secure-compose edit` | `vim` |
@@ -148,9 +236,9 @@ secure-compose --version            Show version
 
 ### How it works
 
-1. **Encryption**: `age --encrypt --passphrase --armor`
+1. **Encryption**: Uses `age --encrypt --passphrase --armor`
    - Uses [Scrypt](https://en.wikipedia.org/wiki/Scrypt) KDF for key derivation
-   - Encrypts with X25519 (if using key files) or Argon2id (passphrase)
+   - Encrypts with ChaCha20-Poly1305 (passphrase mode)
    - Outputs ASCII-armored format (readable, git-friendly)
 
 2. **Passphrase sharing**
@@ -159,8 +247,16 @@ secure-compose --version            Show version
    - Consider using `SECURE_COMPOSE_PASSPHRASE` in CI/CD
 
 3. **Cleanup**
-   - `.env` file is automatically deleted after `up`, `exec`, etc.
-   - Only `.env.age` persists on disk
+   - `.env` and secret files are persisted after `up` (for container access)
+   - Remember to remove them manually when done: `rm .env secrets/*.txt`
+
+### Docker Secrets Security
+
+When using Docker secrets:
+- Secret files are mounted at `/run/secrets/<name>` inside the container
+- This is more secure than environment variables (which can leak via logs)
+- Use `_FILE` environment variables (e.g., `POSTGRES_PASSWORD_FILE`) to read from secrets
+- Consider mounting secrets directory as tmpfs to prevent disk writes
 
 ### What it doesn't do
 
@@ -170,7 +266,7 @@ secure-compose --version            Show version
 
 ## Workflow Examples
 
-### Development
+### Development with .env files
 
 ```bash
 # Morning: pull and decrypt
@@ -181,9 +277,30 @@ secure-compose decrypt
 secure-compose up -d
 secure-compose logs -f api
 
-# Evening: cleanup (automatic, or manual)
+# Evening: cleanup
 secure-compose down
 rm -f .env
+```
+
+### Development with Docker secrets
+
+```bash
+# Morning: pull
+git pull
+
+# Start (auto-decrypts secrets from compose file)
+secure-compose up -d
+# → Found 1 secret(s) in compose file
+# → Decrypting secret: db_password
+# → Running: docker compose up -d
+
+# Work normally
+secure-compose logs -f
+secure-compose exec postgres psql -U postgres
+
+# Evening: cleanup
+secure-compose down
+rm -f secrets/*.txt
 ```
 
 ### CI/CD (GitHub Actions example)
@@ -205,6 +322,19 @@ secure-compose edit
 # → Re-encrypts after save
 ```
 
+### Piping workflows
+
+```bash
+# Inspect a specific value
+secure-compose decrypt --stdout | grep DATABASE
+
+# Backup decrypted secrets
+secure-compose decrypt --stdout > secrets.env
+
+# Use with jq for JSON conversion
+secure-compose decrypt --stdout | jq -r 'to_entries | .[] | "\(.key)=\(.value)"'
+```
+
 ## Comparison
 
 | Feature | secure-compose | git-crypt | SOPS |
@@ -213,7 +343,9 @@ secure-compose edit
 | No git filters | ⭐⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐ |
 | Team-friendly | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 | Age encryption | ✅ | ❌ (GPG) | ✅ |
+| Docker secrets support | ✅ | ❌ | ✅ |
 | CI/CD friendly | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
+| Auto-discovery | ✅ | ❌ | ❌ |
 
 ## License
 
