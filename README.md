@@ -58,7 +58,7 @@ sudo mv secure-compose /usr/local/bin/
 ```bash
 git clone https://github.com/rafitox/secure-compose.git
 cd secure-compose
-go build -o secure-compose ./cmd/secure-compose
+go build -o secure-compose .
 sudo mv secure-compose /usr/local/bin/
 ```
 
