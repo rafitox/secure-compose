@@ -3,8 +3,8 @@
 # Build settings
 BINARY_NAME=secure-compose
 INSTALL_PATH=$(HOME)/.local/bin
-VERSION?=v.0.2.0
-LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
+VERSION?=v0.3.0
+LDFLAGS=-ldflags "-X github.com/rafitox/secure-compose/internal/cli.Version=$(VERSION)"
 
 # Go settings
 GOCMD=go
@@ -20,15 +20,15 @@ help: ## Show this help
 
 build: ## Build the binary
 	@echo "Building $(BINARY_NAME)..."
-	$(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) ./cmd/secure-compose
+	$(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) .
 
 build-all: ## Build for all platforms
 	@echo "Building for linux/amd64..."
-	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-linux-amd64 ./cmd/secure-compose
+	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-linux-amd64 .
 	@echo "Building for darwin/amd64..."
-	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-darwin-amd64 ./cmd/secure-compose
+	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-darwin-amd64 .
 	@echo "Building for darwin/arm64..."
-	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-darwin-arm64 ./cmd/secure-compose
+	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-darwin-arm64 .
 	@echo "Done!"
 
 install: build ## Install to ~/.local/bin

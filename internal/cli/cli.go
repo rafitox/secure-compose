@@ -11,6 +11,9 @@ import (
 	"github.com/rafitox/secure-compose/internal/age"
 )
 
+// Version is set at build time via -X github.com/rafitox/secure-compose/internal/cli.Version=v0.3.0
+var Version = "dev"
+
 // Run is the main entry point for the CLI
 func Run() error {
 	// Check for version flag first (before any subcommand)
@@ -59,11 +62,16 @@ func Run() error {
 }
 
 func getVersion() string {
-	v := os.Getenv("SECURE_COMPOSE_VERSION")
-	if v == "" {
-		return "dev"
+	// Version can be set at build time via ldflags:
+	// -X github.com/rafitox/secure-compose/internal/cli.Version=v0.3.0
+	if Version != "dev" {
+		return Version
 	}
-	return v
+	// Fall back to environment variable SECURE_COMPOSE_VERSION
+	if v := os.Getenv("SECURE_COMPOSE_VERSION"); v != "" {
+		return v
+	}
+	return "dev"
 }
 
 func printUsage() {
