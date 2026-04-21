@@ -1,4 +1,4 @@
-module github.com/rafaelperet/secure-compose
+module github.com/rafitox/secure-compose
 
 go 1.25.0
 
@@ -8,4 +8,5 @@ require (
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/term v0.42.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

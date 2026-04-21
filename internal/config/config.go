@@ -12,6 +12,8 @@ type Config struct {
 	Passphrase     string // Passphrase (from env var)
 	NoTeardown     bool   // Skip .env cleanup on exit
 	ProjectRoot    string // Project root directory
+	SecretsDir     string // Directory for docker secrets (e.g., ./secrets)
+	SecretFile     string // Specific secret file to decrypt (for Phase 2)
 }
 
 // Load returns the current configuration
@@ -26,6 +28,8 @@ func Load() *Config {
 		Passphrase:     os.Getenv("SECURE_COMPOSE_PASSPHRASE"),
 		NoTeardown:     os.Getenv("SECURE_COMPOSE_NO_TEARDOWN") == "1",
 		ProjectRoot:    projectRoot,
+		SecretsDir:     getEnv("SECURE_COMPOSE_SECRETS_DIR", ""),
+		SecretFile:     getEnv("SECURE_COMPOSE_SECRET_FILE", ""),
 	}
 }
 
@@ -109,4 +113,19 @@ func (c *Config) HasEnv() bool {
 	envFile, _ := c.FullPaths()
 	_, err := os.Stat(envFile)
 	return err == nil
+}
+
+// IsSecretMode returns true when operating on a docker secret file (not .env)
+func (c *Config) IsSecretMode() bool {
+	return c.SecretFile != ""
+}
+
+// SecretFilePaths returns the secret file and its encrypted counterpart
+func (c *Config) SecretFilePaths() (plainFile, encryptedFile string) {
+	plainFile = c.SecretFile
+	if !filepath.IsAbs(plainFile) {
+		plainFile = filepath.Join(c.ProjectRoot, plainFile)
+	}
+	encryptedFile = plainFile + ".age"
+	return
 }
