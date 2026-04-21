@@ -32,7 +32,9 @@ When you use Docker Compose in development, you typically store secrets in a `.e
 - 📤 **Stdout mode** — Decrypt to stdout for piping workflows
 
 ## Installation
-
+```bash
+go install github.com/rafitox/secure-compose@latest
+``
 ### From binary (recommended)
 
 ```bash
