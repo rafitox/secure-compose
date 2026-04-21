@@ -3,7 +3,7 @@
 # Build settings
 BINARY_NAME=secure-compose
 INSTALL_PATH=$(HOME)/.local/bin
-VERSION?=dev
+VERSION?=v.0.2.0
 LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
 
 # Go settings
