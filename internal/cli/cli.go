@@ -27,6 +27,11 @@ func Run() error {
 		}
 	}
 
+	// Check for --rotate flag (passphrase rotation — no docker involved)
+	if containsFlag(os.Args, "--rotate", "-r") {
+		return rotateCmd()
+	}
+
 	// Check for help flag
 	if len(os.Args) < 2 || os.Args[1] == "-h" || os.Args[1] == "--help" || os.Args[1] == "help" {
 		printUsage()
