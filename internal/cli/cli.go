@@ -624,7 +624,7 @@ func rotateCmd() error {
 	}
 
 	// Constant-time comparison for passphrase
-	if !secrets.ConstantTimeCompare(currentPass, newPass) {
+	if secrets.ConstantTimeCompare(currentPass, newPass) {
 		secrets.SecureZero([]byte(currentPass))
 		secrets.SecureZero([]byte(newPass))
 		secrets.SecureZero([]byte(confirm))
