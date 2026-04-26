@@ -3,11 +3,14 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/rafitox/secure-compose/internal/compose"
 	"github.com/rafitox/secure-compose/internal/config"
 	"github.com/rafitox/secure-compose/internal/docker"
+	"github.com/rafitox/secure-compose/internal/orchestrator"
+	"github.com/rafitox/secure-compose/internal/secrets"
 	"github.com/rafitox/secure-compose/internal/age"
 )
 
@@ -40,6 +43,10 @@ func Run() error {
 		return decryptCmd()
 	case "edit":
 		return editCmd()
+	case "run":
+		return runCmd(args)
+	case "rotate":
+		return rotateCmd()
 	case "up":
 		return composeCmd("up", args)
 	case "down":
@@ -84,6 +91,8 @@ Usage:
   secure-compose decrypt -o            Decrypt to stdout (for piping)
   secure-compose decrypt --secret-file <file>  Decrypt a specific secret file
   secure-compose edit                  Edit encrypted .env file
+  secure-compose rotate               Re-encrypt all .age files with new passphrase
+  secure-compose run <svc> [cmd...]   Run command with secrets injected (no disk write)
   secure-compose up [args]            Decrypt and run docker compose up
   secure-compose down [args]           Run docker compose down and cleanup
   secure-compose exec <svc> <cmd>      Run command in service with decrypted env
@@ -93,23 +102,19 @@ Usage:
   secure-compose -h, --help           Show this help
   secure-compose --version             Show version
 
-Options:
-  -o, --stdout                Write decrypted content to stdout (for piping)
-  -s, --secret-file <path>    Encrypt/decrypt a specific secret file (Docker secrets)
-
-Security:
-  - Uses age with passphrase (scrypt KDF)
-  - Team members share the same passphrase
-  - No key files to manage
-  - .env.age is safe to commit to git
+Security (Zero-Disk Architecture):
+  - Env vars: decrypted to memory only, injected directly into container process
+  - File secrets: decrypted to tmpfs (RAM disk), auto-cleanup on exit
+  - SecureZero: sensitive data overwritten after use
+  - Constant-time comparison: timing-attack resistant passphrase check
 
 Examples:
   secure-compose encrypt
   secure-compose encrypt --secret-file ./secrets/db_password.txt
   secure-compose decrypt
-  secure-compose decrypt --secret-file ./secrets/db_password.txt
   secure-compose decrypt --stdout | jq -r '.DB_PASSWORD'
-  secure-compose decrypt --stdout > backup.env
+  secure-compose rotate
+  secure-compose run postgres psql -U postgres
   secure-compose up -d
   secure-compose up --build
   secure-compose exec postgres psql -U postgres
@@ -119,9 +124,10 @@ Examples:
 Environment Variables:
   SECURE_COMPOSE_ENV_FILE         Path to .env file (default: .env)
   SECURE_COMPOSE_ENCRYPTED_FILE  Path to .env.age file (default: .env.age)
+  SECURE_COMPOSE_SECRET_FILE      Specific secret file for encrypt/decrypt
   SECURE_COMPOSE_PASSPHRASE       Passphrase (for automation, avoid in production)
   SECURE_COMPOSE_NO_TEARDOWN      Set to 1 to skip .env cleanup on exit
-  SECURE_COMPOSE_SECRET_FILE      Specific secret file for encrypt/decrypt
+  SECURE_COMPOSE_VERSION          Override version string
 `)
 }
 
@@ -448,16 +454,91 @@ func composeCmd(op string, args []string) error {
 		composeFile = compose.FindComposeFile(".")
 	}
 
-	// Discover secrets from compose file (Phase 3)
-	var discoveredSecrets []compose.Secret
-	if composeFile != "" {
-		secrets, err := compose.ParseSecrets(composeFile)
+	// Generate a unique session ID for this invocation
+	sessionID := fmt.Sprintf("session-%d", os.Getpid())
+
+	// Get passphrase
+	passphrase := os.Getenv("SECURE_COMPOSE_PASSPHRASE")
+	if passphrase == "" {
+		fmt.Printf("→ Enter passphrase:\n")
+		var err error
+		passphrase, err = readPassphrase("Passphrase: ")
 		if err != nil {
-			fmt.Printf("⚠  Warning: could not parse secrets from %s: %v\n", composeFile, err)
-		} else if len(secrets) > 0 {
-			discoveredSecrets = secrets
-			fmt.Printf("→ Found %d secret(s) in compose file\n", len(secrets))
+			return err
 		}
+	}
+
+	// Create orchestrator for this session
+	orch := orchestrator.New(cfg, composeFile, passphrase, sessionID)
+
+	// Discover secrets from compose file
+	if err := orch.Discover(); err != nil {
+		return err
+	}
+
+	// Decrypt env vars from .env.age (in memory only - no disk write)
+	if err := orch.DecryptEnv(); err != nil {
+		return err
+	}
+
+	// Decrypt file secrets to tmpfs mount
+	if err := orch.DecryptSecrets(); err != nil {
+		return err
+	}
+
+	// Setup signal handler for cleanup
+	orch.SetupSignalHandler()
+
+	// Run docker compose with injected secrets
+	dockerArgs := append([]string{op}, args...)
+	fmt.Printf("→ Running: docker compose %s\n", strings.Join(dockerArgs, " "))
+
+	// Build the command
+	cmd := exec.Command("docker", dockerArgs...)
+
+	// Inject env vars directly into the process (no disk write)
+	if len(orch.EnvSecrets()) > 0 {
+		cmd.Env = append(os.Environ(), orch.EnvSecrets().ToSlice()...)
+	}
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	// Cleanup tmpfs after command exits
+	orch.Cleanup()
+
+	return nil
+}
+
+// runCmd runs a command in a service with decrypted secrets injected.
+// Unlike "up" which runs docker compose, "run" directly executes a process
+// with env vars injected (Infisical-style, no disk write).
+// Usage: secure-compose run [--env-file=<path>] <service> [command...]
+func runCmd(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: secure-compose run [--env-file=<path>] <service> [command...]\n"+
+			"Example: secure-compose run postgres psql -U postgres")
+	}
+
+	// Parse --env-file flag if provided
+	envFile := getFlagValue(args, "--env-file", "-e")
+	if envFile == "" {
+		envFile = os.Getenv("SECURE_COMPOSE_ENCRYPTED_FILE")
+		if envFile == "" {
+			envFile = ".env.age"
+		}
+	}
+
+	cfg := config.Load()
+	cfg.EncryptedFile = envFile
+
+	if err := checkDependencies(); err != nil {
+		return err
 	}
 
 	// Get passphrase
@@ -471,63 +552,155 @@ func composeCmd(op string, args []string) error {
 		}
 	}
 
-	// Decrypt .env (standard mode)
+	// Decrypt .env.age into memory only (no disk write)
 	if _, err := os.Stat(cfg.EncryptedFile); os.IsNotExist(err) {
-		// No .env.age, check if we have other secrets
-		if len(discoveredSecrets) == 0 {
-			return fmt.Errorf("%s not found. Run 'secure-compose encrypt' first", cfg.EncryptedFile)
-		}
-	} else {
-		fmt.Printf("→ Decrypting secrets...\n")
-		if err := age.DecryptFile(cfg.EncryptedFile, cfg.EnvFile, passphrase); err != nil {
-			return fmt.Errorf("decryption failed: %w", err)
-		}
-		if err := os.Chmod(cfg.EnvFile, 0600); err != nil {
-			return fmt.Errorf("failed to set permissions: %w", err)
-		}
+		return fmt.Errorf("%s not found", cfg.EncryptedFile)
 	}
 
-	// Phase 3: Decrypt compose secrets
-	for _, secret := range discoveredSecrets {
-		encryptedFile := compose.ResolveSecretFilePath(composeFile, secret.EncryptedFile())
-		plainFile := compose.ResolveSecretFilePath(composeFile, secret.File)
-
-		if _, err := os.Stat(encryptedFile); err == nil {
-			fmt.Printf("→ Decrypting secret: %s\n", secret.Name)
-			if err := age.DecryptFile(encryptedFile, plainFile, passphrase); err != nil {
-				return fmt.Errorf("failed to decrypt secret %s: %w", secret.Name, err)
-			}
-			if err := os.Chmod(plainFile, 0600); err != nil {
-				fmt.Printf("⚠  Warning: could not set permissions on %s: %v\n", plainFile, err)
-			}
-		}
+	content, err := age.DecryptContent(cfg.EncryptedFile, passphrase)
+	if err != nil {
+		return fmt.Errorf("decryption failed: %w", err)
 	}
 
-	// Build docker compose command
-	dockerArgs := append([]string{op}, args...)
-	fmt.Printf("→ Running: docker compose %s\n", strings.Join(dockerArgs, " "))
+	envSecrets, err := secrets.ParseEnvFile(content)
+	secrets.SecureZero(content) // Clear raw content immediately
+	if err != nil {
+		return fmt.Errorf("failed to parse env file: %w", err)
+	}
 
-	if err := docker.Run(dockerArgs); err != nil {
+	fmt.Printf("→ Running with %d env var(s) (in memory only)\n", len(envSecrets))
+
+	// Parse service name and remaining command
+	service := args[0]
+	cmdArgs := args[1:]
+
+	// Build docker compose run command
+	dockerArgs := append([]string{"run", "--rm", "-e"}, service)
+	dockerArgs = append(dockerArgs, cmdArgs...)
+
+	cmd := exec.Command("docker", dockerArgs...)
+
+	// Inject env vars directly (no disk write)
+	cmd.Env = append(os.Environ(), envSecrets.ToSlice()...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
+// rotateCmd re-encrypts all .age files with a new passphrase.
+// Usage: secure-compose rotate
+func rotateCmd() error {
+	if err := checkDependencies(); err != nil {
 		return err
 	}
 
-	// After successful up, warn about .env persistence
-	if op == "up" {
-		fmt.Printf("\n⚠  .env and secret files are persisted on disk after 'up'.\n")
-		fmt.Printf("   The container reads them on startup — if you restart the container\n")
-		fmt.Printf("   without these files, it will fail.\n")
-		fmt.Printf("   Remove them manually when ready.\n")
-		if len(discoveredSecrets) > 0 {
-			fmt.Printf("\n   Secrets found:\n")
-			for _, s := range discoveredSecrets {
-				resolved := compose.ResolveSecretFilePath(composeFile, s.File)
-				fmt.Printf("   - %s (%s)\n", s.Name, resolved)
-			}
-		}
-		fmt.Printf("\n")
+	fmt.Printf("→ Rotate passphrase for all .age files\n\n")
+	fmt.Printf("⚠  This will re-encrypt all .age files with a new passphrase.\n")
+	fmt.Printf("   All team members must be notified of the new passphrase.\n\n")
+
+	// Get current passphrase
+	fmt.Printf("→ Enter current passphrase:\n")
+	currentPass, err := readPassphrase("Current passphrase: ")
+	if err != nil {
+		return err
 	}
 
+	// Get new passphrase
+	fmt.Printf("\n→ Enter new passphrase:\n")
+	newPass, err := readPassphrase("New passphrase: ")
+	if err != nil {
+		return err
+	}
+
+	confirm, err := readPassphrase("Confirm new passphrase: ")
+	if err != nil {
+		return err
+	}
+
+	if newPass != confirm {
+		return fmt.Errorf("passphrases do not match")
+	}
+
+	// Constant-time comparison for passphrase
+	if !secrets.ConstantTimeCompare(currentPass, newPass) {
+		secrets.SecureZero([]byte(currentPass))
+		secrets.SecureZero([]byte(newPass))
+		secrets.SecureZero([]byte(confirm))
+		return fmt.Errorf("current and new passphrase must be different")
+	}
+	secrets.SecureZero([]byte(confirm))
+
+	// Find all .age files
+	ageFiles, err := findAgeFiles(".")
+	if err != nil {
+		return fmt.Errorf("failed to find .age files: %w", err)
+	}
+
+	if len(ageFiles) == 0 {
+		fmt.Printf("→ No .age files found\n")
+		return nil
+	}
+
+	fmt.Printf("\n→ Found %d .age file(s) to re-encrypt\n", len(ageFiles))
+
+	rotated := 0
+	for _, ageFile := range ageFiles {
+		// Decrypt with current passphrase
+		content, err := age.DecryptContent(ageFile, currentPass)
+		if err != nil {
+			fmt.Printf("⚠  Skipping %s: decryption failed (wrong passphrase?)\n", ageFile)
+			continue
+		}
+
+		// Re-encrypt with new passphrase
+		if err := age.EncryptContent(ageFile, content, newPass); err != nil {
+			secrets.SecureZero(content)
+			return fmt.Errorf("failed to re-encrypt %s: %w", ageFile, err)
+		}
+
+		secrets.SecureZero(content)
+		fmt.Printf("→ Rotated: %s\n", ageFile)
+		rotated++
+	}
+
+	secrets.SecureZero([]byte(currentPass))
+	secrets.SecureZero([]byte(newPass))
+
+	printSuccess(fmt.Sprintf("Rotated %d file(s)", rotated))
+	fmt.Printf("\n→ Share the new passphrase with your team via 1Password/Vault\n")
+
 	return nil
+}
+
+// findAgeFiles recursively finds all .age files in directory.
+func findAgeFiles(dir string) ([]string, error) {
+	var files []string
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		path := dir + "/" + entry.Name()
+
+		// Skip hidden directories and common non-project directories
+		if entry.IsDir() && entry.Name()[0] != '.' &&
+			entry.Name() != "node_modules" &&
+			entry.Name() != "vendor" &&
+			entry.Name() != ".git" {
+			subFiles, err := findAgeFiles(path)
+			if err == nil {
+				files = append(files, subFiles...)
+			}
+		} else if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".age") {
+			files = append(files, path)
+		}
+	}
+
+	return files, nil
 }
 
 // checkDependencies verifies required tools are installed
