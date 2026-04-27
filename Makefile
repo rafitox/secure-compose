@@ -1,16 +1,15 @@
-.PHONY: build install clean test lint fmt run help
+.PHONY: build install clean test lint fmt run help debug
 
 # Build settings
 BINARY_NAME=secure-compose
 INSTALL_PATH=$(HOME)/.local/bin
-VERSION?=v0.3.0
-LDFLAGS=-ldflags "-X github.com/rafitox/secure-compose/internal/cli.Version=$(VERSION)"
+VERSION?=v0.4.0
+LDFLAGS:=-X github.com/rafitox/secure-compose/internal/cli.Version=$(VERSION)
 
 # Go settings
 GOCMD=go
 GOBUILD=$(GOCMD) build
 GOTEST=$(GOCMD) test
-GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 GOFMT=gofmt
 GOLINT=golangci-lint
@@ -19,16 +18,20 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 build: ## Build the binary
-	@echo "Building $(BINARY_NAME)..."
-	$(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) .
+	@echo "Building $(BINARY_NAME) $(VERSION)..."
+	$(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) .
+
+debug: ## Build debug binary to /tmp (for development)
+	@echo "Building $(BINARY_NAME) $(VERSION) to /tmp/$(BINARY_NAME)-debug..."
+	$(GOBUILD) -ldflags "$(LDFLAGS)" -o /tmp/$(BINARY_NAME)-debug .
 
 build-all: ## Build for all platforms
 	@echo "Building for linux/amd64..."
-	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-linux-amd64 .
+	GOOS=linux GOARCH=amd64 $(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)-linux-amd64 .
 	@echo "Building for darwin/amd64..."
-	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-darwin-amd64 .
+	GOOS=darwin GOARCH=amd64 $(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)-darwin-amd64 .
 	@echo "Building for darwin/arm64..."
-	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-darwin-arm64 .
+	GOOS=darwin GOARCH=arm64 $(GOBUILD) -ldflags "$(LDFLAGS)" -o $(BINARY_NAME)-darwin-arm64 .
 	@echo "Done!"
 
 install: build ## Install to ~/.local/bin
@@ -46,7 +49,8 @@ clean: ## Clean build artifacts
 	@echo "Cleaning..."
 	@rm -f $(BINARY_NAME)
 	@rm -f $(BINARY_NAME)-*
-	@rm -f cover.out
+	@rm -f /tmp/$(BINARY_NAME)-debug
+	@rm -f cover.out coverage.html
 	@echo "Done!"
 
 test: ## Run tests
@@ -67,7 +71,7 @@ fmt: ## Format code
 	@echo "Formatting..."
 	$(GOFMT) -s -w .
 
-run: build ## Build and run
+run: ## Run (requires existing binary)
 	@echo "Running..."
 	./$(BINARY_NAME) $(ARGS)
 
@@ -84,5 +88,9 @@ dev-deps: ## Install development dependencies
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 bump-version: ## Bump version (usage: make bump-version VERSION=1.2.3)
-	@sed -i 's/Version=.*"/Version="$(VERSION)"/' Makefile
+	@echo "Bumping version to $(VERSION)..."
+	@sed -i 's/^VERSION?=.*/VERSION?=$(VERSION)/' Makefile
+	@sed -i 's|// Version is set at build time via -X .*|// Version is set at build time via -X github.com/rafitox/secure-compose/internal/cli.Version=$(VERSION)|' internal/cli/cli.go
 	@echo "Version bumped to $(VERSION)"
+	@echo "  - Makefile: VERSION?= updated"
+	@echo "  - internal/cli/cli.go: comment updated"

@@ -14,7 +14,7 @@ import (
 	"github.com/rafitox/secure-compose/internal/age"
 )
 
-// Version is set at build time via -X github.com/rafitox/secure-compose/internal/cli.Version=v0.3.0
+// Version is set at build time via -X github.com/rafitox/secure-compose/internal/cli.Version=v0.4.0
 var Version = "dev"
 
 // Run is the main entry point for the CLI
@@ -40,6 +40,7 @@ func Run() error {
 
 	cmd := os.Args[1]
 	args := os.Args[2:]
+	fmt.Printf("DEBUG Run: os.Args=%v cmd=%q args=%v\n", os.Args, cmd, args)
 
 	switch cmd {
 	case "encrypt":
@@ -160,6 +161,25 @@ func encryptCmd() error {
 		return fmt.Errorf("%s not found. Create it first with your secrets", cfg.EnvFile)
 	}
 
+	// Check for --generate flag
+	generate := containsFlag(os.Args, "--generate", "-g")
+
+	if generate {
+		passphrase := age.GeneratePassphrase()
+		fmt.Printf("→ Encrypting %s → %s\n", cfg.EnvFile, cfg.EncryptedFile)
+		fmt.Printf("→ Auto-generated passphrase: %s\n", passphrase)
+		fmt.Printf("→ Share this passphrase with your team!\n\n")
+
+		if err := age.EncryptFile(cfg.EnvFile, cfg.EncryptedFile, passphrase); err != nil {
+			return fmt.Errorf("encryption failed: %w", err)
+		}
+
+		printSuccess("Encrypted successfully")
+		fmt.Printf("→ You can safely commit %s to git\n", cfg.EncryptedFile)
+		fmt.Printf("→ Don't forget to add %s to .gitignore\n", cfg.EnvFile)
+		return nil
+	}
+
 	fmt.Printf("→ Encrypting %s → %s\n", cfg.EnvFile, cfg.EncryptedFile)
 	fmt.Printf("→ Enter passphrase (shared with your team)\n")
 
@@ -193,6 +213,22 @@ func encryptCmd() error {
 func encryptSecretFile(plainFile, encryptedFile string) error {
 	if _, err := os.Stat(plainFile); os.IsNotExist(err) {
 		return fmt.Errorf("%s not found. Create it first with your secrets", plainFile)
+	}
+
+	generate := containsFlag(os.Args, "--generate", "-g")
+
+	if generate {
+		passphrase := age.GeneratePassphrase()
+		fmt.Printf("→ Encrypting %s → %s\n", plainFile, encryptedFile)
+		fmt.Printf("→ Auto-generated passphrase: %s\n", passphrase)
+		fmt.Printf("→ Share this passphrase with your team!\n\n")
+
+		if err := age.EncryptFile(plainFile, encryptedFile, passphrase); err != nil {
+			return fmt.Errorf("encryption failed: %w", err)
+		}
+
+		printSuccess("Encrypted successfully")
+		return nil
 	}
 
 	fmt.Printf("→ Encrypting %s → %s\n", plainFile, encryptedFile)
@@ -447,7 +483,9 @@ func editCmd() error {
 }
 
 func composeCmd(op string, args []string) error {
+	fmt.Printf("DEBUG composeCmd START: op=%q args=%v\n", op, args)
 	cfg := config.Load()
+	fmt.Printf("DEBUG after config.Load: args=%v\n", args)
 
 	if err := checkDependencies(); err != nil {
 		return err
@@ -455,6 +493,7 @@ func composeCmd(op string, args []string) error {
 
 	// Check for compose-file flag
 	composeFile := getFlagValue(os.Args, "--compose-file", "-f")
+	fmt.Printf("DEBUG after getFlagValue(os.Args): composeFile=%q args=%v\n", composeFile, args)
 	if composeFile == "" {
 		composeFile = compose.FindComposeFile(".")
 	}
@@ -497,9 +536,11 @@ func composeCmd(op string, args []string) error {
 	// Run docker compose with injected secrets
 	dockerArgs := append([]string{op}, args...)
 	fmt.Printf("→ Running: docker compose %s\n", strings.Join(dockerArgs, " "))
+	fmt.Printf("→ os.Args: %v\n", os.Args)
+	fmt.Printf("→ cmd: docker, args: %v\n", dockerArgs)
 
-	// Build the command
-	cmd := exec.Command("docker", dockerArgs...)
+	// Build the command (note: "docker compose" requires "compose" as first arg after "docker")
+	cmd := exec.Command("docker", append([]string{"compose"}, dockerArgs...)...)
 
 	// Inject env vars directly into the process (no disk write)
 	if len(orch.EnvSecrets()) > 0 {
